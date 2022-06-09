@@ -10,5 +10,7 @@ var CLI struct{}
 
 func Main() {
 	ctx := kong.Parse(&CLI, KongOptions()...)
-	log.Fatal(ctx.Run())
+	if err := ctx.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
