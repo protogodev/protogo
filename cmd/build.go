@@ -1,11 +1,13 @@
 package protogocmd
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 
@@ -21,48 +23,48 @@ func init() {
 }
 
 type Build struct {
-	Plugins []string `name:"plugin" help:"Plugins to build."`
+	Plugins     []string `name:"plugin" help:"Plugins to build. Format: <module[=replacement]>"`
+	SkipCleanup int      `env:"PROTOGO_SKIP_CLEANUP" default:"0" help:"Whether to leave build artifacts on disk after exiting."`
 }
 
 func (b *Build) Run(ctx *kong.Context) error {
+	mods := toModules(b.Plugins)
+
 	wd, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	dir, err := ioutil.TempDir(wd, "build-")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	defer os.RemoveAll(dir)
+	if b.SkipCleanup == 0 {
+		defer os.RemoveAll(dir)
+	}
 
 	mainDir := filepath.Join(dir, "protogo")
 	if err := os.Mkdir(mainDir, os.ModePerm); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	mainFile := filepath.Join(mainDir, "main.go")
-	if err := b.genMain(mainFile); err != nil {
+	if err := b.genMain(mainFile, mods.Paths()); err != nil {
 		log.Fatal(err)
 	}
 
-	run := func(name string, arg ...string) {
-		cmd := exec.Command(name, arg...)
-		cmd.Dir = mainDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			log.Fatalf("err: %s", out)
-		}
+	var cmds commands
+	cmds.Add("go", "mod", "init")
+	for _, replace := range mods.ReplacementDirectives() {
+		cmds.Add("go", "mod", "edit", "-replace", replace)
 	}
-
-	run("go", "mod", "init")
-	run("go", "mod", "tidy")
-	run("go", "build")
-	run("cp", "protogo", wd)
-
-	return nil
+	cmds.Add("go", "mod", "tidy")
+	cmds.Add("go", "build")
+	cmds.Add("cp", "protogo", wd)
+	return cmds.Run(mainDir)
 }
 
-func (b *Build) genMain(filename string) error {
+func (b *Build) genMain(filename string, paths []string) error {
 	tmpl := `package main
 
 import (
@@ -77,7 +79,7 @@ func main() {
 	protogocmd.Main()
 }
 `
-	file, err := generator.Generate(tmpl, b.Plugins, generator.Options{
+	file, err := generator.Generate(tmpl, paths, generator.Options{
 		Formatted:      true,
 		TargetFileName: filename,
 	})
@@ -85,4 +87,72 @@ func main() {
 		return err
 	}
 	return file.Write()
+}
+
+type command struct {
+	name string
+	args []string
+}
+
+type commands []command
+
+func (cs *commands) Add(name string, args ...string) {
+	*cs = append(*cs, command{
+		name: name,
+		args: args,
+	})
+}
+
+func (cs commands) Run(dir string) error {
+	for _, c := range cs {
+		cmd := exec.Command(c.name, c.args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("err: %s", out)
+		}
+	}
+	return nil
+}
+
+type module struct {
+	path        string
+	replacement string
+}
+
+type modules []module
+
+func toModules(plugins []string) (ms modules) {
+	for _, p := range plugins {
+		parts := strings.SplitN(p, "=", 2)
+		m := module{path: parts[0]}
+
+		if len(parts) == 2 {
+			replacement, err := filepath.Abs(parts[1])
+			if err != nil {
+				log.Fatal(err)
+			}
+			m.replacement = replacement
+		}
+
+		ms = append(ms, m)
+	}
+	return
+}
+
+func (ms modules) Paths() (p []string) {
+	for _, m := range ms {
+		p = append(p, m.path)
+	}
+	return
+}
+
+func (ms modules) ReplacementDirectives() (r []string) {
+	for _, m := range ms {
+		directive := m.path
+		if m.replacement != "" {
+			directive += "=" + m.replacement
+		}
+		r = append(r, directive)
+	}
+	return
 }
