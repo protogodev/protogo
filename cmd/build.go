@@ -3,7 +3,6 @@ package protogocmd
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +27,10 @@ type Build struct {
 }
 
 func (b *Build) Run(ctx *kong.Context) error {
-	mods := toModules(b.Plugins)
+	mods, err := toModules(b.Plugins)
+	if err != nil {
+		return err
+	}
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -50,7 +52,7 @@ func (b *Build) Run(ctx *kong.Context) error {
 
 	mainFile := filepath.Join(mainDir, "main.go")
 	if err := b.genMain(mainFile, mods.Paths()); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	var cmds commands
@@ -121,7 +123,8 @@ type module struct {
 
 type modules []module
 
-func toModules(plugins []string) (ms modules) {
+func toModules(plugins []string) (modules, error) {
+	var ms modules
 	for _, p := range plugins {
 		parts := strings.SplitN(p, "=", 2)
 		m := module{path: parts[0]}
@@ -129,14 +132,14 @@ func toModules(plugins []string) (ms modules) {
 		if len(parts) == 2 {
 			replacement, err := filepath.Abs(parts[1])
 			if err != nil {
-				log.Fatal(err)
+				return nil, err
 			}
 			m.replacement = replacement
 		}
 
 		ms = append(ms, m)
 	}
-	return
+	return ms, nil
 }
 
 func (ms modules) Paths() (p []string) {
@@ -148,11 +151,10 @@ func (ms modules) Paths() (p []string) {
 
 func (ms modules) ReplacementDirectives() (r []string) {
 	for _, m := range ms {
-		directive := m.path
 		if m.replacement != "" {
-			directive += "=" + m.replacement
+			directive := m.path + "=" + m.replacement
+			r = append(r, directive)
 		}
-		r = append(r, directive)
 	}
 	return
 }
