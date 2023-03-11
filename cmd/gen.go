@@ -11,14 +11,20 @@ import (
 )
 
 type Generator interface {
+	// PkgName returns the destination package name to which the generated file will belong.
+	//
+	// Note that if it's different from the source package name (to which the interface belong),
+	// all type names used in the interface will be full-qualified.
+	PkgName() string
+
 	Generate(data *ifacetool.Data) (*generator.File, error)
 }
 
 type Gen struct {
 	Generator
 
-	SrcFilename   string `arg:"" name:"source-file" help:"source-file"`
-	InterfaceName string `arg:"" name:"interface-name" help:"interface-name"`
+	SrcFilename   string `arg:"" name:"source-file" help:"source file"`
+	InterfaceName string `arg:"" name:"interface-name" help:"interface name"`
 }
 
 func NewGen(generator Generator) *Gen {
@@ -31,8 +37,7 @@ func (g *Gen) Run(ctx *kong.Context) error {
 		return err
 	}
 
-	// Non-empty pkgName makes all type names used in the interface full-qualified.
-	pkgName := "x"
+	pkgName := g.Generator.PkgName()
 	data, err := parser.ParseInterface(pkgName, srcFilename, g.InterfaceName)
 	if err != nil {
 		return err
