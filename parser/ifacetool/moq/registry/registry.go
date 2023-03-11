@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"go/types"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -143,17 +142,19 @@ func pkgInfoFromPath(srcDir string, mode packages.LoadMode) (*packages.Package, 
 	return pkgs[0], nil
 }
 
+// The original version does not work as expected.
+// see https://github.com/matryer/moq/blob/a464ccce76fe6128c2285cef104bb8fba1bb410a/internal/registry/registry.go#L176-L188.
+//
+// NOTE: Changed by RussellLuo.
 func findPkgPath(pkgInputVal string, srcPkg *packages.Package) string {
 	if pkgInputVal == "" {
 		return srcPkg.PkgPath
 	}
-	if pkgInDir(srcPkg.PkgPath, pkgInputVal) {
+
+	if srcPkg.Name == pkgInputVal || srcPkg.Name+"_test" == pkgInputVal {
 		return srcPkg.PkgPath
 	}
-	subdirectoryPath := filepath.Join(srcPkg.PkgPath, pkgInputVal)
-	if pkgInDir(subdirectoryPath, pkgInputVal) {
-		return subdirectoryPath
-	}
+
 	return ""
 }
 
