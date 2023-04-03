@@ -2,7 +2,6 @@ package protogocmd
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,8 +21,10 @@ func init() {
 }
 
 type Build struct {
-	Plugins     []string `name:"plugin" help:"Plugins to build. Format: <module[=replacement]>"`
-	SkipCleanup int      `env:"PROTOGO_SKIP_CLEANUP" default:"0" help:"Whether to leave build artifacts on disk after exiting."`
+	Plugins []string `name:"plugin" help:"Plugins to build. Format: <module[=replacement]>"`
+
+	Verbose     bool `short:"v" help:"Print the internal commands."`
+	SkipCleanup int  `env:"PROTOGO_SKIP_CLEANUP" default:"0" help:"Whether to leave build artifacts on disk after exiting."`
 }
 
 func (b *Build) Run(ctx *kong.Context) error {
@@ -37,15 +38,23 @@ func (b *Build) Run(ctx *kong.Context) error {
 		return err
 	}
 
-	dir, err := ioutil.TempDir(wd, "build-")
+	dir, err := os.MkdirTemp(wd, "build-")
 	if err != nil {
 		return err
 	}
 	if b.SkipCleanup == 0 {
-		defer os.RemoveAll(dir)
+		defer func() {
+			if b.Verbose {
+				fmt.Println("rm -r " + dir)
+			}
+			_ = os.RemoveAll(dir)
+		}()
 	}
 
 	mainDir := filepath.Join(dir, "protogo")
+	if b.Verbose {
+		fmt.Println("mkdir -p " + mainDir)
+	}
 	if err := os.Mkdir(mainDir, os.ModePerm); err != nil {
 		return err
 	}
@@ -56,14 +65,14 @@ func (b *Build) Run(ctx *kong.Context) error {
 	}
 
 	var cmds commands
-	cmds.Add("go", "mod", "init")
+	cmds.Add("go", "mod", "init", "protogo.dev/protogo")
 	for _, replace := range mods.ReplacementDirectives() {
 		cmds.Add("go", "mod", "edit", "-replace", replace)
 	}
 	cmds.Add("go", "mod", "tidy")
 	cmds.Add("go", "build")
 	cmds.Add("cp", "protogo", wd)
-	return cmds.Run(mainDir)
+	return cmds.Run(mainDir, b.Verbose)
 }
 
 func (b *Build) genMain(filename string, paths []string) error {
@@ -105,14 +114,27 @@ func (cs *commands) Add(name string, args ...string) {
 	})
 }
 
-func (cs commands) Run(dir string) error {
+func (cs commands) Run(dir string, verbose bool) error {
+	if verbose {
+		fmt.Println("cd " + dir)
+	}
+
 	for _, c := range cs {
+		if verbose {
+			fmt.Println(c.name + " " + strings.Join(c.args, " "))
+		}
+
 		cmd := exec.Command(c.name, c.args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("err: %s", out)
 		}
 	}
+
+	if verbose {
+		fmt.Println("cd -")
+	}
+
 	return nil
 }
 
